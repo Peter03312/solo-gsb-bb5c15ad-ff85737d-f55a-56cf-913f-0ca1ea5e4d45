@@ -229,11 +229,102 @@ function occupiedSummary(bands) {
   return bands.map((b) => `${fmt(b.lo)}–${fmt(b.hi)} MHz`).join('、');
 }
 
+/* ---------- 现场扫描采样导入（原始采样不入库，仅保留确认后的合并区间） ---------- */
+
+let importedBands = []; // 本次已确认导入的占用区间（MHz，已按相交/相接合并）
+
+function bandsListHtml(bands, cls = 'scan-bands') {
+  const items = bands.map((b) => `<li><span class="freq">${fmt(b.lo)}–${fmt(b.hi)} MHz</span></li>`).join('');
+  return `<div class="${cls}-wrap"><ul class="${cls}">${items}</ul></div>`;
+}
+
+/** 渲染已确认导入的区间条（与手填区间共同参与协调；可一键清除本次导入） */
+function renderScanAdopted() {
+  const box = $('#scan-adopted');
+  if (importedBands.length === 0) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = `
+    <div class="scan-adopted">
+      <div class="occupied-head">
+        <span>🚧 已确认导入：<strong>${importedBands.length}</strong> 个占用区间（将与上方手填区间合并后参与本次协调，保存方案时一并记录；原始采样不入库）</span>
+        <button type="button" class="btn btn-sm btn-danger" id="btn-scan-clear">清除本次导入</button>
+      </div>
+      ${bandsListHtml(importedBands)}
+    </div>`;
+  $('#btn-scan-clear').addEventListener('click', () => {
+    importedBands = [];
+    $('#scan-result').innerHTML = '';
+    renderScanAdopted();
+    toast('已清除本次扫描导入');
+  });
+}
+
+/** 渲染解析预览（尚未生效，需确认后才参与协调） */
+function renderScanPreview(data) {
+  const box = $('#scan-result');
+  const noBand = data.bands.length === 0;
+  box.innerHTML = `
+    <div class="scan-preview">
+      <p class="plan-meta" style="margin:0 0 6px">
+        共解析 <strong>${data.sampleCount}</strong> 条非空采样（同频点取最高电平后 ${data.pointCount} 个频点），
+        采样间隔 <span class="freq">${fmt(data.interval)}</span> MHz、占用阈值
+        <span class="freq">${fmt(data.threshold)}</span> dBm；
+        ${noBand
+          ? '<span class="warn-text">没有电平达到阈值的频点，未生成占用区间。</span>'
+          : `达到阈值的频点扩展为中心 ± 半个采样间隔的闭区间并合并相交/相接区间，得到 <strong>${data.bands.length}</strong> 个占用区间：`}
+      </p>
+      ${noBand ? '' : bandsListHtml(data.bands)}
+      <div class="save-plan-row">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-scan-confirm">确认导入并与手填区间合并</button>
+      </div>
+    </div>`;
+  $('#btn-scan-confirm').addEventListener('click', () => {
+    importedBands = data.bands;
+    box.innerHTML = '';
+    renderScanAdopted();
+    toast(noBand ? '已确认（无占用区间生效）' : `已确认导入 ${importedBands.length} 个占用区间`);
+  });
+}
+
+async function scanPreview() {
+  const btn = $('#btn-scan-preview');
+  btn.disabled = true;
+  btn.textContent = '解析中…';
+  try {
+    const data = await api('/api/scan/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        text: $('#scan-text').value,
+        interval: Number($('#scan-interval').value),
+        threshold: Number($('#scan-threshold').value),
+      }),
+    });
+    renderScanPreview(data);
+  } catch (e) {
+    const lines = (e.data && Array.isArray(e.data.errors) ? e.data.errors : [])
+      .map((x) => `<li>${x.line ? `第 ${x.line} 行：` : ''}${esc(x.message)}</li>`)
+      .join('');
+    $('#scan-result').innerHTML = `
+      <div class="scan-preview scan-error">
+        <p class="danger-text" style="margin:0 0 6px">✗ ${esc(e.message)}</p>
+        ${lines ? `<ul class="preview-reasons" style="padding-left:18px">${lines}</ul>` : ''}
+      </div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '解析并预览区间';
+  }
+}
+
+$('#btn-scan-preview').addEventListener('click', scanPreview);
+
 $('#coord-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   let occupiedBands;
   try {
-    occupiedBands = readOccupiedBands();
+    // 手填占用区间与本次已确认导入的扫描区间一起提交，服务端统一校验并合并相交/相接区间
+    occupiedBands = readOccupiedBands().concat(importedBands);
   } catch (err) {
     toast(err.message, true);
     return;

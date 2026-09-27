@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
 const { mhzToHz, hzToMhz, computeConflicts, coordinate, normalizeOccupiedBands, findSwitchOrder } = require('./lib/intermod');
+const { importScanSamples, ScanValidationError } = require('./lib/scan');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -156,6 +157,33 @@ app.get('/api/conflicts', (req, res) => {
   const channels = toChannels(listDevices());
   const conflicts = computeConflicts(channels).map(conflictToJson);
   res.json({ count: conflicts.length, conflicts });
+});
+
+// ---------- 现场扫描采样导入（只读，不落库） ----------
+
+/**
+ * 解析粘贴的两列 CSV（频率 MHz、电平 dBm，无表头），整批校验后生成占用区间：
+ * 同频点取最高电平、按频率排序、达到阈值的点扩展为中心 ± 半个采样间隔的闭区间，
+ * 相交/相接区间自动合并。原始采样不写入数据库，仅返回生成结果供界面预览确认。
+ */
+app.post('/api/scan/import', (req, res) => {
+  const body = req.body || {};
+  if (typeof body.text !== 'string') return badRequest(res, '采样内容必须是两列 CSV 文本');
+  try {
+    const result = importScanSamples(body.text, body.interval, body.threshold);
+    res.json({
+      bands: result.bands,
+      sampleCount: result.sampleCount,
+      pointCount: result.pointCount,
+      interval: result.interval,
+      threshold: result.threshold,
+    });
+  } catch (e) {
+    if (e instanceof ScanValidationError) {
+      return res.status(400).json({ error: e.message, errors: e.errors });
+    }
+    throw e;
+  }
 });
 
 // ---------- 自动协调 ----------
