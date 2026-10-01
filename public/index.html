@@ -68,6 +68,21 @@
         <p class="hint">临时填写现场扫描到的占用区间（MHz）。候选频道新载频的保护区与任一占用区间相交（端点相接也算）即视为不可用；重叠区间会自动合并。</p>
         <div id="occupied-rows"></div>
       </div>
+      <div class="scan-box">
+        <div class="occupied-head">
+          <span>现场扫描采样导入（可选，仅预览生成区间，原始采样不入库）</span>
+          <button type="button" class="btn btn-sm btn-ghost" id="btn-scan-clear">清除导入</button>
+        </div>
+        <p class="hint">粘贴无表头两列 CSV（频率 MHz, 电平 dBm，最多 1000 条非空记录），填写采样间隔与占用阈值后先「预览生成区间」；达到阈值的频点会扩展为中心 ± 半个采样间隔的闭区间并自动合并。确认后与上方手填占用区间合并参与本次协调，并随方案保存。</p>
+        <textarea id="scan-csv" rows="4" spellcheck="false" placeholder="512.000, -85&#10;512.025, -72&#10;512.050, -91"></textarea>
+        <div class="scan-params">
+          <label>采样间隔 (MHz)<input id="scan-step" type="number" step="0.000001" min="0.000001" value="0.025" /></label>
+          <label>占用阈值 (dBm)<input id="scan-threshold" type="number" step="0.1" value="-80" /></label>
+          <button type="button" class="btn" id="btn-scan-preview">预览生成区间</button>
+        </div>
+        <div id="scan-preview"></div>
+        <div id="scan-status"></div>
+      </div>
       <div id="coord-result"></div>
     </section>
 

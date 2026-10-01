@@ -229,6 +229,78 @@ function occupiedSummary(bands) {
   return bands.map((b) => `${fmt(b.lo)}–${fmt(b.hi)} MHz`).join('、');
 }
 
+/* ---------- 现场扫描采样导入（预览 → 确认后并入协调；原始采样不入库） ---------- */
+
+let scanImport = null; // 已确认并入协调的扫描区间 { bands, points, unique, triggered }
+
+/** 已确认导入的状态行（随协调请求与手填区间合并提交） */
+function renderScanStatus() {
+  const el = $('#scan-status');
+  if (!scanImport) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `<p class="ok-text" style="margin:8px 0 0">✓ 已导入 ${scanImport.bands.length} 个扫描区间`
+    + `（${scanImport.points} 条采样 → ${scanImport.unique} 个频点 → ${scanImport.triggered} 个达阈值）：`
+    + `${esc(occupiedSummary(scanImport.bands))}。将与手填占用区间合并参与协调，可点「清除导入」移除。</p>`;
+}
+
+/** 渲染服务端返回的生成区间预览（确认前不参与协调） */
+function renderScanPreview(r) {
+  const box = $('#scan-preview');
+  const bandText = occupiedSummary(r.bands);
+  box.innerHTML = `
+    <div class="scan-preview-box">
+      <p class="muted" style="margin:0 0 4px">采样 ${r.points} 条 → 去重后 ${r.unique} 个频点 →
+        达到阈值 ${fmt(r.threshold)} dBm 的频点 ${r.triggered} 个 → 生成 ${r.bands.length} 个区间
+        （中心 ± ${fmt(r.step / 2)} MHz，相交/相接已合并）</p>
+      ${r.bands.length
+        ? `<p class="freq" style="margin:0 0 8px">${esc(bandText)}</p>`
+        : '<p class="warn-text" style="margin:0 0 8px">没有任何频点达到阈值，未生成占用区间；可降低阈值后重试。</p>'}
+      ${r.bands.length
+        ? '<button type="button" class="btn btn-sm btn-primary" id="btn-scan-confirm">确认并入占用区间</button>'
+        : ''}
+      <span class="hint" style="margin:0 0 0 8px">确认后才会参与协调</span>
+    </div>`;
+  const confirmBtn = box.querySelector('#btn-scan-confirm');
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', () => {
+      scanImport = { bands: r.bands, points: r.points, unique: r.unique, triggered: r.triggered };
+      box.innerHTML = '';
+      renderScanStatus();
+      toast(`已导入 ${r.bands.length} 个扫描区间，将随本次协调合并避让`);
+    });
+  }
+}
+
+$('#btn-scan-preview').addEventListener('click', async () => {
+  const btn = $('#btn-scan-preview');
+  btn.disabled = true;
+  try {
+    const result = await api('/api/scan/intervals', {
+      method: 'POST',
+      body: JSON.stringify({
+        csv: $('#scan-csv').value,
+        step: Number($('#scan-step').value),
+        threshold: Number($('#scan-threshold').value),
+      }),
+    });
+    renderScanPreview(result);
+  } catch (e) {
+    $('#scan-preview').innerHTML = `<p class="danger-text" style="margin:8px 0 0">✗ ${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#btn-scan-clear').addEventListener('click', () => {
+  scanImport = null;
+  $('#scan-csv').value = '';
+  $('#scan-preview').innerHTML = '';
+  renderScanStatus();
+  toast('已清除本次扫描导入');
+});
+
 $('#coord-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   let occupiedBands;
@@ -238,6 +310,8 @@ $('#coord-form').addEventListener('submit', async (e) => {
     toast(err.message, true);
     return;
   }
+  // 已确认的扫描导入区间与手填占用区间合并提交（服务端会再次归并，合并结果随方案保存）
+  if (scanImport) occupiedBands = occupiedBands.concat(scanImport.bands);
   const btn = $('#btn-coordinate');
   btn.disabled = true;
   btn.textContent = '协调中…';

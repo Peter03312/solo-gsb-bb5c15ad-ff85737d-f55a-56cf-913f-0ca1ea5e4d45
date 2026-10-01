@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const express = require('express');
 const db = require('./db');
 const { mhzToHz, hzToMhz, computeConflicts, coordinate, normalizeOccupiedBands, findSwitchOrder } = require('./lib/intermod');
+const { scanToBands } = require('./lib/scan');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -156,6 +157,26 @@ app.get('/api/conflicts', (req, res) => {
   const channels = toChannels(listDevices());
   const conflicts = computeConflicts(channels).map(conflictToJson);
   res.json({ count: conflicts.length, conflicts });
+});
+
+// ---------- 现场扫描采样导入（只生成占用区间，原始采样不入库） ----------
+
+/**
+ * 扫描采样 → 占用区间预览。body：{ csv, step, threshold }
+ *   csv       无表头两列 CSV 文本（频率 MHz, 电平 dBm）
+ *   step      采样间隔 MHz（正数）
+ *   threshold 占用阈值 dBm（电平 >= 阈值视为占用）
+ * 整批校验有限数值、正间隔与最多 1000 条非空记录，错误指出行号；
+ * 同频点取最高电平、按频率排序，达阈值频点扩展为中心 ± 半步进闭区间并合并。
+ * 本接口纯计算，不写入任何数据。
+ */
+app.post('/api/scan/intervals', (req, res) => {
+  const body = req.body || {};
+  try {
+    res.json(scanToBands(body.csv, body.step, body.threshold));
+  } catch (e) {
+    badRequest(res, e.message);
+  }
 });
 
 // ---------- 自动协调 ----------
